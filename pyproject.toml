@@ -1,6 +1,56 @@
 [build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
-]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "wahoomc"
+version = "4.3.0"
+description = "Create maps for your Wahoo bike computer based on latest OSM maps"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Benjamin Kreuscher", email = "benni.kreuscher@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "gdal==3.6.*",
+    "shapely==1.8.*",
+    "requests==2.28.*",
+    "geojson==2.5.*",
+    "beautifulsoup4==4.11.*",
+    "lxml==4.9.*",
+    "matplotlib==3.4.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pylint==2.15.*",
+    "autopep8==2.0.*",
+    "vulture",
+    "pydeps",
+    "twine",
+    "mock",
+    "build",
+]
+
+[project.urls]
+Homepage = "https://github.com/treee111/wahooMapsCreator"
+"Bug Tracker" = "https://github.com/treee111/wahooMapsCreator/issues"
+
+[tool.setuptools]
+packages = ["wahoomc", "wahoomc.init"]
+
+[tool.setuptools.package-data]
+wahoomc = [
+    "resources/*.*",
+    "resources/*/*.*",
+    "resources/*/*/*.*",
+    "resources/*/*/*/*.*",
+    "tooling_win/*.*",
+    "tooling_win/*/*.*",
+    "tooling_win/*/*/*.*",
+    "tooling_win/*/*/*/*.*",
+]

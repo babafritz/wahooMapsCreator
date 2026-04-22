@@ -27,15 +27,15 @@ The instructions are intended to be suitable for beginners.
 If anything is unclear or seams wrong, write an [:pencil2: issue](https://github.com/treee111/wahooMapsCreator/issues)
 
 ## To start with...
-1. [:rocket: Quick Start Guide to download and install required programs](docs/QUICKSTART_ANACONDA.md#download-and-install-required-programs)
+1. [:rocket: Quick Start Guide to download and install required programs](docs/QUICKSTART.md#1-install-system-prerequisites)
 
 2. [:computer: Run wahooMapsCreator - detailled usage description](docs/USAGE.md#usage-of-wahoomapscreator)
 
-> In short: activate Anaconda environment, run wahooMapsCreator via CLI or via GUI.
+> In short: install system tools + [`uv`](https://docs.astral.sh/uv/), then run via CLI or GUI.
 ```
-conda activate gdal-user
-python -m wahoomc cli -co malta
-python -m wahoomc gui
+uv sync
+uv run python -m wahoomc cli -co malta
+uv run python -m wahoomc gui
 ```
 
 3. [:floppy_disk: Copy the map-files to your device after generation](docs/COPY_TO_WAHOO.md#copy-maps-files-to-wahoo-device-)

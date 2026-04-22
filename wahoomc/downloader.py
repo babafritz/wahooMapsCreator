@@ -12,7 +12,10 @@ import time
 import logging
 import platform
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from email.utils import formatdate
 import requests
+from requests.adapters import HTTPAdapter
 
 # import custom python packages
 from wahoomc.constants_functions import get_tooling_win_path
@@ -28,6 +31,17 @@ from wahoomc.constants import USER_TOOLING_WIN_DIR
 from wahoomc.constants import USER_DIR
 
 log = logging.getLogger('main-logger')
+
+# Cap parallel Geofabrik downloads. Geofabrik asks clients to share bandwidth
+# fairly; four is a conservative ceiling that still gives a useful speed-up.
+MAX_PARALLEL_DOWNLOADS = 4
+
+# Module-level pooled session so every request reuses TCP connections + TLS
+# handshakes. Set once at import; workers in this module all go through it.
+_SESSION = requests.Session()
+_adapter = HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=2)
+_SESSION.mount('http://', _adapter)
+_SESSION.mount('https://', _adapter)
 
 
 def older_than_x_days(file_creation_timestamp, max_days_old):
@@ -93,17 +107,55 @@ def build_osm_pbf_filepath(country):
 
 def download_url_to_file(url, map_file_path):
     """
-    download the content of a ULR to file
+    download the content of a URL to file, using HTTP conditional requests
+    when a previous copy exists so unchanged files transfer zero bytes
     """
+    headers = {}
+    etag_path = map_file_path + '.etag'
+
+    # If the target already exists, ask the server whether it changed. Prefer
+    # ETag (strongest) and fall back to If-Modified-Since from the file mtime.
+    if os.path.isfile(map_file_path):
+        try:
+            with open(etag_path, 'r', encoding='utf-8') as etag_fh:
+                stored_etag = etag_fh.read().strip()
+            if stored_etag:
+                headers['If-None-Match'] = stored_etag
+        except FileNotFoundError:
+            pass
+        headers['If-Modified-Since'] = formatdate(
+            timeval=os.path.getmtime(map_file_path), usegmt=True)
+
     # set timeout to 30 minutes (per file)
-    request_geofabrik = requests.get(
-        url, allow_redirects=True, stream=True, timeout=1800)
-    if request_geofabrik.status_code != 200:
-        log.error('! failed download URL: %s', url)
+    response = _SESSION.get(
+        url, allow_redirects=True, stream=True, timeout=1800, headers=headers)
+
+    if response.status_code == 304:
+        log.info('+ %s unchanged on server (304), skipping body transfer',
+                 os.path.basename(map_file_path))
+        # refresh the mtime so max_days_old checks don't re-trigger tomorrow
+        os.utime(map_file_path, None)
+        response.close()
+        return
+
+    if response.status_code != 200:
+        log.error('! failed download URL: %s (status %s)', url, response.status_code)
         sys.exit()
 
-    # write content to file
-    write_to_file(map_file_path, request_geofabrik)
+    # stream to a .part file then atomically rename so an interrupted download
+    # can't leave a half-written file that later looks up to date
+    part_path = map_file_path + '.part'
+    with open(part_path, mode='wb') as file_handle:
+        for chunk in response.iter_content(chunk_size=1024 * 100):
+            if chunk:
+                file_handle.write(chunk)
+    os.replace(part_path, map_file_path)
+
+    etag = response.headers.get('ETag')
+    if etag:
+        with open(etag_path, 'w', encoding='utf-8') as etag_fh:
+            etag_fh.write(etag)
+    response.close()
 
 
 def download_tooling():
@@ -177,7 +229,7 @@ def get_latest_pypi_version():
     get latest wahoomc version available on PyPI
     """
     try:
-        response = requests.get(
+        response = _SESSION.get(
             'https://pypi.org/pypi/wahoomc/json', timeout=1)
         return response.json()['info']['version']
     except (requests.ConnectionError, requests.Timeout):
@@ -290,7 +342,11 @@ class Downloader:
 
     def check_file(self, target_filepath):
         """
-        check if given file is up-to-date
+        check if given file is up-to-date. When force_download is set the
+        existing copy is removed so the next GET fetches a full body;
+        otherwise we keep the file in place and let the conditional GET in
+        download_url_to_file send If-Modified-Since / If-None-Match so the
+        server can reply 304 when nothing changed.
         """
 
         need_to_download = False
@@ -299,17 +355,19 @@ class Downloader:
         log.info('-' * 80)
         log.info('# check %s file', logging_filename)
 
-        # Check for expired file and delete it
         try:
             if self.should_file_be_downloaded(target_filepath):
-                log.info('+ Deleting old %s file', logging_filename)
-                os.remove(target_filepath)
+                if self.force_download:
+                    log.info('+ Force-download: deleting old %s file', logging_filename)
+                    os.remove(target_filepath)
+                else:
+                    log.info('+ %s is older than %d days; will revalidate',
+                             logging_filename, self.max_days_old)
                 need_to_download = True
 
         except FileNotFoundError:
             need_to_download = True
 
-        # if file does not exists --> download
         if not os.path.exists(target_filepath) or \
                 not os.path.isfile(target_filepath):
             need_to_download = True
@@ -340,12 +398,18 @@ class Downloader:
                 map_file_path = glob.glob(
                     f'{USER_MAPS_DIR}/**/{country}-latest.osm.pbf')
 
-            # delete .osm.pbf file if out of date
+            # mark .osm.pbf file for revalidation if out of date. Only delete
+            # on force_download; otherwise the conditional GET will decide.
             if len(map_file_path) == 1 and os.path.isfile(map_file_path[0]):
                 if self.should_file_be_downloaded(map_file_path[0]):
-                    log.info(
-                        '+ mapfile for %s: deleted.', country)
-                    os.remove(map_file_path[0])
+                    if self.force_download:
+                        log.info('+ Force-download: deleting mapfile for %s', country)
+                        os.remove(map_file_path[0])
+                    else:
+                        self.border_countries[country] = {
+                            'map_file': map_file_path[0]}
+                        log.info(
+                            '+ mapfile for %s: stale, will revalidate', country)
                     self.need_to_dl.append('osm_pbf')
                 else:
                     self.border_countries[country] = {
@@ -361,20 +425,37 @@ class Downloader:
 
     def download_osm_pbf_file(self):
         """
-        download countries' OSM files
+        download countries' OSM files in parallel (capped to
+        MAX_PARALLEL_DOWNLOADS to play nice with Geofabrik)
         """
+        pending = []
         for country, item in self.border_countries.items():
             try:
                 if item['download'] is True:
-                    # build path to downloaded file with geofabrik country
                     map_file_path = build_osm_pbf_filepath(country)
-                    # fetch the geofabrik download url to countries' OSM file
                     url = self.o_geofabrik_json.get_geofabrik_url(country)
-                    download_file(map_file_path, url)
-                    self.border_countries[country] = {
-                        'map_file': map_file_path}
+                    pending.append((country, map_file_path, url))
             except KeyError:
                 pass
+
+        if not pending:
+            return
+
+        def _fetch(work):
+            country, path, url = work
+            download_file(path, url)
+            return country, path
+
+        max_workers = min(MAX_PARALLEL_DOWNLOADS, len(pending))
+        if max_workers <= 1:
+            for work in pending:
+                country, path = _fetch(work)
+                self.border_countries[country] = {'map_file': path}
+            return
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            for country, path in ex.map(_fetch, pending):
+                self.border_countries[country] = {'map_file': path}
 
     def should_file_be_downloaded(self, file_path):
         """

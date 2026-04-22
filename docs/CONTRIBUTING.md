@@ -2,7 +2,7 @@
 
 #### Table of contents <!-- omit in toc --> 
 - [How to Contribute](#how-to-contribute)
-  - [Developer Anaconda environment](#developer-anaconda-environment)
+  - [Developer environment (uv)](#developer-environment-uv)
   - [Pylint](#pylint)
   - [Unittests](#unittests)
 - [Structure of the repository](#structure-of-the-repository)
@@ -19,8 +19,8 @@
   - [PyPI commands](#pypi-commands)
 
 ## How to Contribute
-1. Create a Anaconda environment for developers
-    - 👉 [Developer Anaconda environment](#developer-anaconda-environment)
+1. Set up the developer environment with `uv`
+    - 👉 [Developer environment (uv)](#developer-environment-uv)
 2. Create a branch by forking the repository and apply your change.
 3. Commit and push your change on that branch.
 4. Run Pylint with 10.00/10
@@ -32,27 +32,20 @@
 8. Once the change has been approved and merged, we will inform you in a comment.
 9. Celebrate! 🎉
 
-### Developer Anaconda environment 
-- /conda_env/gdal-user.yml is for creating Anaconda environment for users
-- /conda_env/gdal-dev.yml is for creating Anaconda environment for developers
+### Developer environment (uv)
 
-The Anaconda environment for development can be installed via
+Dependencies are declared in `pyproject.toml` with pinned versions, and
+`uv.lock` freezes them for reproducible installs. See
+[QUICKSTART.md](./QUICKSTART.md) for system prerequisites and how to install
+`uv`.
 
-  - macOS/ Linux
 ```
-conda env create -f ./conda_env/gdal-dev.yml
-```
-  - Windows
-```
-conda env create -f .\conda_env\gdal-dev.yml 
+uv sync --extra dev
 ```
 
-more information on [documentation for sharing Anaconda environments](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#exporting-an-environment-file-across-platforms)
-
-The .yml files with only the installed packages were created via
-```
-conda env export > environment.yml --from-history
-```
+This creates `.venv/` with both runtime and developer-only tooling (pylint,
+autopep8, twine, build, etc.). Re-run `uv sync --extra dev` after any change
+to `pyproject.toml` or `uv.lock`.
 
 ### Pylint
 Run pylint for all relevant directories/files
@@ -138,7 +131,7 @@ git-chglog -o CHANGELOG.md --next-tag v0.10.0
 ```
 
 ### PyPI commands
-1. Change the version in `setup.cfg`, `constants.py` and `gdal-user.yml`
+1. Change the version in `pyproject.toml` and `constants.py`
 2. Build a new release to publish to PyPI:  
 ```
 python -m build

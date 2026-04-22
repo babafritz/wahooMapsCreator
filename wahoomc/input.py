@@ -5,6 +5,7 @@ functions and object for processing input via CLI and GUI
 
 # import official python packages
 import argparse
+import os
 import sys
 from platform import uname
 
@@ -88,6 +89,12 @@ def process_call_of_the_tool():
                               help="output debug logger messages")
     options_args.add_argument('-hdd', '--hdd_mode', action='store_true',
                               help="use mapwriter hdd mode")
+    # number of parallel workers for per-tile processing. 0 means auto (cpu_count-1)
+    options_args.add_argument('-j', '--jobs', type=int, default=InputData().jobs,
+                              help="number of parallel workers for per-tile processing (0 = auto)")
+    # delete per-tile split-*.osm.pbf intermediates after merge
+    options_args.add_argument('-ci', '--cleanup_intermediate', action='store_true',
+                              help="delete per-tile split-*.osm.pbf intermediates after merge")
 
     args = parser_top.parse_args()
 
@@ -120,6 +127,8 @@ def process_call_of_the_tool():
 
     o_input_data.verbose = args.verbose
     o_input_data.hdd_mode = args.hdd_mode
+    o_input_data.jobs = args.jobs
+    o_input_data.cleanup_intermediate = args.cleanup_intermediate
 
     return o_input_data
 
@@ -198,6 +207,9 @@ class InputData():  # pylint: disable=too-many-instance-attributes,too-few-publi
         self.zip_folder = False
         self.save_cruiser = False
         self.hdd_mode = False
+
+        self.jobs = 0  # 0 means auto: max(1, cpu_count - 1)
+        self.cleanup_intermediate = False
 
         self.verbose = False
 

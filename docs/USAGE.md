@@ -21,9 +21,13 @@ wahooMapsCreator can be used in two different ways:
 Both ways support the same arguments to be used for the map-creation process. You can choose the arguments via GUI or as [CLI-arguments](#advanced-cli-usage).
 
 ## Always activate environment first
+wahooMapsCreator runs inside the uv-managed virtualenv. Either activate it
+once per shell:
 ```
-conda activate gdal-user
+source .venv/bin/activate        # Linux / macOS
+.venv\Scripts\activate.bat       # Windows
 ```
+…or prefix each command with `uv run` (shown in the examples below).
 
 ## Run wahooMapsCreator for your country
 It might be a good idea to run wahooMapsCreator first for a small country e.g. Malta to check if everything is running fine.
@@ -117,7 +121,7 @@ Actually, wahooMapsCreator includes fuel stations, backeries, cafes and railway 
 
 ## Contour lines
 For creating maps which include contour lines and have them displayed on your Wahoo device, these steps need to be done:
-1. Enhance your Anaconda environment using [these steps](./QUICKSTART_ANACONDA.md#additions-for--generating-contour-lines)
+1. Install the extra dependencies for contour lines using [these steps](./QUICKSTART.md#4-contour-lines-optional)
 2. Create custom maps with the argument `-con` like [normally](#run-wahoomapscreator-for-your-country). You will be asked for username/password on first run generating contour lines.
 3. Use a theme that renders contour lines
 

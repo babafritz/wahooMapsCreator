@@ -5,6 +5,8 @@ functions and object for managing OSM maps
 
 # import official python packages
 from datetime import datetime
+from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor
 import glob
 import multiprocessing
 import os
@@ -69,6 +71,220 @@ def get_timestamp_last_changed(file_path):
     return datetime.fromtimestamp(chg_time).isoformat()
 
 
+# ---------------------------------------------------------------------------
+# per-tile worker functions (module-level so they're picklable for Pool)
+# ---------------------------------------------------------------------------
+
+
+def _worker_generate_land(args):
+    tile, force_processing = args
+    land_file = os.path.join(USER_OUTPUT_DIR,
+                             f'{tile["x"]}', f'{tile["y"]}', 'land.shp')
+    out_file_land1 = os.path.join(USER_OUTPUT_DIR,
+                                  f'{tile["x"]}', f'{tile["y"]}', 'land')
+
+    if not os.path.isfile(land_file) or force_processing is True:
+        cmd = ['ogr2ogr', '-overwrite', '-skipfailures']
+        if tile["x"] == 255 or tile["y"] == 255 or tile["x"] == 0 or tile["y"] == 0:
+            cmd.extend(['-spat', f'{tile["left"]:.6f}',
+                        f'{tile["bottom"]:.6f}',
+                        f'{tile["right"]:.6f}',
+                        f'{tile["top"]:.6f}'])
+        else:
+            cmd.extend(['-spat', f'{tile["left"]-0.1:.6f}',
+                        f'{tile["bottom"]-0.1:.6f}',
+                        f'{tile["right"]+0.1:.6f}',
+                        f'{tile["top"]+0.1:.6f}'])
+        cmd.append(land_file)
+        cmd.append(LAND_POLYGONS_PATH)
+
+        run_subprocess_and_log_output(
+            cmd, f'! Error generating land for tile: {tile["x"]},{tile["y"]}')
+
+    if not os.path.isfile(out_file_land1 + '1.osm') or force_processing is True:
+        cmd = ['python', os.path.join(RESOURCES_DIR, 'shape2osm.py'),
+               '-l', out_file_land1, land_file]
+        run_subprocess_and_log_output(
+            cmd, f'! Error creating land.osm for tile: {tile["x"]},{tile["y"]}')
+
+
+def _worker_generate_sea(args):
+    tile, force_processing, sea_template = args
+    out_file_sea = os.path.join(USER_OUTPUT_DIR,
+                                f'{tile["x"]}', f'{tile["y"]}', 'sea.osm')
+    if os.path.isfile(out_file_sea) and force_processing is False:
+        return
+
+    if tile["x"] == 255 or tile["y"] == 255 or tile["x"] == 0 or tile["y"] == 0:
+        left, bottom, right, top = tile["left"], tile["bottom"], tile["right"], tile["top"]
+    else:
+        left, bottom, right, top = tile["left"] - 0.1, tile["bottom"] - 0.1, tile["right"] + 0.1, tile["top"] + 0.1
+
+    sea_data = (sea_template
+                .replace('$LEFT', f'{left:.6f}')
+                .replace('$BOTTOM', f'{bottom:.6f}')
+                .replace('$RIGHT', f'{right:.6f}')
+                .replace('$TOP', f'{top:.6f}'))
+    with open(out_file_sea, mode='w', encoding="utf-8") as output_file:
+        output_file.write(sea_data)
+
+
+def _worker_generate_elevation(args):
+    tile, force_processing, use_srtm1, hgt_path, username, password, phyghtmap_jobs = args
+    out_file_elevation = os.path.join(
+        USER_OUTPUT_DIR, f'{tile["x"]}', f'{tile["y"]}', 'elevation')
+
+    if use_srtm1:
+        existing = glob.glob(os.path.join(
+            USER_OUTPUT_DIR, str(tile["x"]), str(tile["y"]), 'elevation*srtm1*.osm'))
+        source = '--source=srtm1,view1,view3,srtm3'
+    else:
+        existing = glob.glob(os.path.join(
+            USER_OUTPUT_DIR, str(tile["x"]), str(tile["y"]), 'elevation*view1*.osm'))
+        source = '--source=view1,view3,srtm3'
+
+    if (len(existing) == 1 and os.path.isfile(existing[0])) and force_processing is False:
+        return
+
+    cmd = ['phyghtmap']
+    cmd.append('-a ' + f'{tile["left"]}' + ':' + f'{tile["bottom"]}' +
+               ':' + f'{tile["right"]}' + ':' + f'{tile["top"]}')
+    cmd.extend(['-o', f'{out_file_elevation}', '-s 10', '-c 100,50', source,
+                f'--jobs={phyghtmap_jobs}', '--viewfinder-mask=1', '--start-node-id=20000000000',
+                '--max-nodes-per-tile=0', '--start-way-id=2000000000', '--write-timestamp',
+                '--no-zero-contour', '--hgtdir=' + hgt_path])
+    cmd.append('--earthexplorer-user=' + username)
+    cmd.append('--earthexplorer-password=' + password)
+    run_subprocess_and_log_output(
+        cmd, f'! Error in phyghtmap with tile: {tile["x"]},{tile["y"]}')
+
+
+def _worker_split_tile_country(args):
+    tile, country, filtered_file, filtered_file_names, is_windows, osmconvert_path = args
+    out_file = os.path.join(USER_OUTPUT_DIR,
+                            f'{tile["x"]}', f'{tile["y"]}', f'split-{country}.osm.pbf')
+    out_file_names = os.path.join(USER_OUTPUT_DIR,
+                                  f'{tile["x"]}', f'{tile["y"]}', f'split-{country}-names.osm.pbf')
+    bbox = f'{tile["left"]},{tile["bottom"]},{tile["right"]},{tile["top"]}'
+
+    if is_windows:
+        for src, dst in ((filtered_file, out_file),
+                         (filtered_file_names, out_file_names)):
+            cmd = [osmconvert_path, '-v', '--hash-memory=2500',
+                   '-b=' + bbox,
+                   '--complete-ways', '--complete-multipolygons', '--complete-boundaries',
+                   src, '-o=' + dst]
+            run_subprocess_and_log_output(
+                cmd, f'! Error in osmconvert with country: {country}. Win')
+    else:
+        for src, dst in ((filtered_file, out_file),
+                         (filtered_file_names, out_file_names)):
+            cmd = ['osmium', 'extract', '-b', bbox, src,
+                   '-s', 'smart', '-o', dst, '--overwrite']
+            run_subprocess_and_log_output(
+                cmd, f'! Error in Osmium with country: {country}. macOS')
+
+
+def _sort_land_files_for_tile(tile, is_windows):
+    """sort land*.osm files for a single tile; safe to call from a worker"""
+    land_files = glob.glob(os.path.join(USER_OUTPUT_DIR,
+                                        f'{tile["x"]}', f'{tile["y"]}', 'land*.osm'))
+    for land in land_files:
+        if is_windows:
+            cmd = [OSMOSIS_WIN_FILE_PATH]
+        else:
+            cmd = ['osmosis']
+        cmd.extend(['--read-xml', 'file=' + land])
+        cmd.append('--sort')
+        cmd.extend(['--write-xml', 'file=' + land])
+        run_subprocess_and_log_output(
+            cmd, f'Error in Osmosis with sorting land* osm files of tile: {tile["x"]},{tile["y"]}')
+
+
+def _worker_merge_tile(args):
+    (tile, border_country_set, process_border_countries, contour,
+     workers, is_windows, cleanup_intermediate) = args
+    out_tile_dir = os.path.join(USER_OUTPUT_DIR,
+                                f'{tile["x"]}', f'{tile["y"]}')
+    out_file_merged = os.path.join(out_tile_dir, 'merged.osm.pbf')
+    land_files = glob.glob(os.path.join(out_tile_dir, 'land*.osm'))
+    elevation_files = glob.glob(os.path.join(out_tile_dir, 'elevation*.osm'))
+
+    _sort_land_files_for_tile(tile, is_windows)
+
+    cmd = [OSMOSIS_WIN_FILE_PATH] if is_windows else ['osmosis']
+
+    loop = 0
+    split_files = []
+    for country in tile['countries']:
+        if process_border_countries or country in border_country_set:
+            split_file = os.path.join(out_tile_dir, f'split-{country}.osm.pbf')
+            split_names = os.path.join(out_tile_dir, f'split-{country}-names.osm.pbf')
+            cmd.extend(['--rbf', split_file, 'workers=' + workers])
+            if loop > 0:
+                cmd.append('--merge')
+            cmd.extend(['--rbf', split_names, 'workers=' + workers, '--merge'])
+            split_files.extend([split_file, split_names])
+            loop += 1
+
+    for land in land_files:
+        cmd.extend(['--rx', 'file=' + land, '--s', '--m'])
+    if contour:
+        for elevation in elevation_files:
+            cmd.extend(['--rx', 'file=' + elevation, '--s', '--m'])
+    cmd.extend(['--rx', 'file=' + os.path.join(out_tile_dir, 'sea.osm'), '--s', '--m'])
+    cmd.extend(['--tag-transform',
+                'file=' + os.path.join(RESOURCES_DIR, 'tunnel-transform.xml'),
+                '--wb', out_file_merged, 'omitmetadata=true'])
+
+    run_subprocess_and_log_output(
+        cmd, f'! Error in Osmosis with tile: {tile["x"]},{tile["y"]}')
+
+    if cleanup_intermediate:
+        for path in split_files:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _worker_create_map(args):
+    (tile, tag_wahoo_xml_path, hdd_mode, is_windows,
+     save_cruiser, mapwriter_threads, workers, lzma_threads) = args
+    out_file_map = os.path.join(USER_OUTPUT_DIR,
+                                f'{tile["x"]}', f'{tile["y"]}.map')
+    merged_file = os.path.join(USER_OUTPUT_DIR,
+                               f'{tile["x"]}', f'{tile["y"]}', 'merged.osm.pbf')
+
+    if is_windows:
+        cmd = [OSMOSIS_WIN_FILE_PATH, '--rbf', merged_file,
+               'workers=' + workers, '--mw', 'file=' + out_file_map]
+    else:
+        cmd = ['osmosis', '--rb', merged_file, '--mw', 'file=' + out_file_map]
+    cmd.append(f'bbox={tile["bottom"]:.6f},{tile["left"]:.6f},{tile["top"]:.6f},{tile["right"]:.6f}')
+    cmd.append('zoom-interval-conf=12,0,17')
+    cmd.append(f'threads={mapwriter_threads}')
+    if hdd_mode:
+        cmd.append('type=hd')
+    cmd.append(f'tag-conf-file={tag_wahoo_xml_path}')
+    run_subprocess_and_log_output(
+        cmd, f'Error in creating map file via Osmosis with tile: {tile["x"]},{tile["y"]}. mapwriter plugin installed?')
+
+    if is_windows:
+        cmd = [get_tooling_win_path('lzma'), 'e', out_file_map,
+               out_file_map + '.lzma', f'-mt{lzma_threads}',
+               '-d27', '-fb273', '-eos']
+    else:
+        cmd = ['lzma', out_file_map, '-f']
+        if save_cruiser:
+            cmd.append('--keep')
+    run_subprocess_and_log_output(
+        cmd, f'! Error creating map files for tile: {tile["x"]},{tile["y"]}')
+
+    with open(out_file_map + '.lzma.17', mode='wb'):
+        pass
+
+
 class OsmMaps:
     """
     This is a OSM data class
@@ -77,12 +293,55 @@ class OsmMaps:
     # Number of workers for the Osmosis read binary fast function
     workers = '1'
 
-    def __init__(self, o_osm_data):
+    def __init__(self, o_osm_data, jobs=0, cleanup_intermediate=False):
         self.o_osm_data = o_osm_data
         self.osmconvert_path = get_tooling_win_path('osmconvert')
+        # cache for per-country .config.json reads; avoids re-parsing the same
+        # file up to 4x per country during the filtering phase.
+        # None = file missing or unreadable.
+        self._country_config_cache = {}
+
+        # 0 means auto: leave one core free for the OS.
+        if jobs and jobs > 0:
+            self.jobs = jobs
+        else:
+            self.jobs = max(1, (os.cpu_count() or 1) - 1)
+        self.cleanup_intermediate = cleanup_intermediate
 
         create_empty_directories(
             USER_OUTPUT_DIR, self.o_osm_data.tiles, self.o_osm_data.border_countries)
+
+    def _run_parallel(self, worker, tasks, label):
+        """
+        fan out a worker over tasks, respecting self.jobs and keeping ordered
+        log output. Falls back to serial when jobs==1 or len(tasks)<=1.
+        """
+        tasks = list(tasks)
+        total = len(tasks)
+        pool_size = min(self.jobs, total) if total else 1
+        if pool_size <= 1:
+            for idx, task in enumerate(tasks, start=1):
+                worker(task)
+                log.info('+ (%s %d/%d) done', label, idx, total)
+            return
+        with Pool(pool_size) as pool:
+            for idx, _ in enumerate(pool.imap_unordered(worker, tasks), start=1):
+                log.info('+ (%s %d/%d) done', label, idx, total)
+
+    def _get_country_config(self, country):
+        """
+        return the parsed .config.json for a country, reading from disk on
+        first access and caching thereafter
+        """
+        if country in self._country_config_cache:
+            return self._country_config_cache[country]
+        try:
+            cfg = read_json_file_country_config(os.path.join(
+                USER_OUTPUT_DIR, country, ".config.json"))
+        except FileNotFoundError:
+            cfg = None
+        self._country_config_cache[country] = cfg
+        return cfg
 
     def filter_tags_from_country_osm_pbf_files(self):  # pylint: disable=too-many-statements
         """
@@ -210,51 +469,10 @@ class OsmMaps:
         log.info('-' * 80)
         log.info('# Generate land for each coordinate')
         timings = Timings()
-        tile_count = 1
-        for tile in self.o_osm_data.tiles:
-            land_file = os.path.join(USER_OUTPUT_DIR,
-                                     f'{tile["x"]}', f'{tile["y"]}', 'land.shp')
-            out_file_land1 = os.path.join(USER_OUTPUT_DIR,
-                                          f'{tile["x"]}', f'{tile["y"]}', 'land')
-            timings_tile = Timings()
 
-            # create land.dbf, land.prj, land.shp, land.shx
-            if not os.path.isfile(land_file) or self.o_osm_data.force_processing is True:
-                self.log_tile_info(tile["x"], tile["y"], tile_count)
-                cmd = ['ogr2ogr', '-overwrite', '-skipfailures']
-                # Try to prevent getting outside of the +/-180 and +/- 90 degrees borders. Normally the +/- 0.1 are there to prevent white lines at border borders.
-                if tile["x"] == 255 or tile["y"] == 255 or tile["x"] == 0 or tile["y"] == 0:
-                    cmd.extend(['-spat', f'{tile["left"]:.6f}',
-                                f'{tile["bottom"]:.6f}',
-                                f'{tile["right"]:.6f}',
-                                f'{tile["top"]:.6f}'])
-                else:
-                    cmd.extend(['-spat', f'{tile["left"]-0.1:.6f}',
-                                f'{tile["bottom"]-0.1:.6f}',
-                                f'{tile["right"]+0.1:.6f}',
-                                f'{tile["top"]+0.1:.6f}'])
-                cmd.append(land_file)
-                cmd.append(LAND_POLYGONS_PATH)
-
-                run_subprocess_and_log_output(
-                    cmd, f'! Error generating land for tile: {tile["x"]},{tile["y"]}')
-
-            # create land1.osm
-            if not os.path.isfile(out_file_land1+'1.osm') or self.o_osm_data.force_processing is True:
-                # Windows
-                if platform.system() == "Windows":
-                    cmd = ['python', os.path.join(RESOURCES_DIR,
-                                                  'shape2osm.py'), '-l', out_file_land1, land_file]
-
-                # Non-Windows
-                else:
-                    cmd = ['python', os.path.join(RESOURCES_DIR,
-                                                  'shape2osm.py'), '-l', out_file_land1, land_file]
-
-                run_subprocess_and_log_output(
-                    cmd, f'! Error creating land.osm for tile: {tile["x"]},{tile["y"]}')
-            self.log_tile_debug(tile["x"], tile["y"], tile_count, timings_tile.stop_and_return())
-            tile_count += 1
+        tasks = [(tile, self.o_osm_data.force_processing)
+                 for tile in self.o_osm_data.tiles]
+        self._run_parallel(_worker_generate_land, tasks, 'land')
 
         log.info('+ Generate land for each coordinate: OK, %s', timings.stop_and_return())
 
@@ -266,40 +484,13 @@ class OsmMaps:
         log.info('-' * 80)
         log.info('# Generate sea for each coordinate')
         timings = Timings()
-        tile_count = 1
-        for tile in self.o_osm_data.tiles:
-            out_file_sea = os.path.join(USER_OUTPUT_DIR,
-                                        f'{tile["x"]}', f'{tile["y"]}', 'sea.osm')
-            timings_tile = Timings()
-            if not os.path.isfile(out_file_sea) or self.o_osm_data.force_processing is True:
-                self.log_tile_info(tile["x"], tile["y"], tile_count)
-                with open(os.path.join(RESOURCES_DIR, 'sea.osm'), encoding="utf-8") as sea_file:
-                    sea_data = sea_file.read()
 
-                    # Try to prevent getting outside of the +/-180 and +/- 90 degrees borders. Normally the +/- 0.1 are there to prevent white lines at tile borders
-                    if tile["x"] == 255 or tile["y"] == 255 or tile["x"] == 0 or tile["y"] == 0:
-                        sea_data = sea_data.replace(
-                            '$LEFT', f'{tile["left"]:.6f}')
-                        sea_data = sea_data.replace(
-                            '$BOTTOM', f'{tile["bottom"]:.6f}')
-                        sea_data = sea_data.replace(
-                            '$RIGHT', f'{tile["right"]:.6f}')
-                        sea_data = sea_data.replace(
-                            '$TOP', f'{tile["top"]:.6f}')
-                    else:
-                        sea_data = sea_data.replace(
-                            '$LEFT', f'{tile["left"]-0.1:.6f}')
-                        sea_data = sea_data.replace(
-                            '$BOTTOM', f'{tile["bottom"]-0.1:.6f}')
-                        sea_data = sea_data.replace(
-                            '$RIGHT', f'{tile["right"]+0.1:.6f}')
-                        sea_data = sea_data.replace(
-                            '$TOP', f'{tile["top"]+0.1:.6f}')
+        with open(os.path.join(RESOURCES_DIR, 'sea.osm'), encoding="utf-8") as sea_file:
+            sea_template = sea_file.read()
 
-                    with open(out_file_sea, mode='w', encoding="utf-8") as output_file:
-                        output_file.write(sea_data)
-            self.log_tile_debug(tile["x"], tile["y"], tile_count, timings_tile.stop_and_return())
-            tile_count += 1
+        tasks = [(tile, self.o_osm_data.force_processing, sea_template)
+                 for tile in self.o_osm_data.tiles]
+        self._run_parallel(_worker_generate_sea, tasks, 'sea')
 
         log.info('+ Generate sea for each coordinate: OK, %s', timings.stop_and_return())
 
@@ -313,52 +504,17 @@ class OsmMaps:
         log.info('# Generate contour lines for each coordinate')
 
         hgt_path = os.path.join(USER_DL_DIR, 'hgt')
-
         timings = Timings()
-        tile_count = 1
-        for tile in self.o_osm_data.tiles:
-            out_file_elevation = os.path.join(
-                USER_OUTPUT_DIR, f'{tile["x"]}', f'{tile["y"]}', 'elevation')
 
-            # 1) as the elevation file has a suffix, they need to be searched with glob.glob
-            # example elevation filename: elevation_lon14.06_15.47lat35.46_36.60_view1,view3.osm
+        # when running in a multi-process pool, let each phyghtmap use a single
+        # thread to avoid (jobs * 8) oversubscription; otherwise keep the
+        # previous default of 8.
+        phyghtmap_jobs = 8 if self.jobs <= 1 else max(1, (os.cpu_count() or 1) // self.jobs)
 
-            # 2) use view1 as default source and srtm1 if wished by the user
-            # view1 offers better quality in general apart fro some places
-            # where srtm1 is the better choice
-            if use_srtm1:
-                # 1) search for srtm1 elevation files
-                out_file_elevation_existing = glob.glob(os.path.join(
-                    USER_OUTPUT_DIR, str(tile["x"]), str(tile["y"]), 'elevation*srtm1*.osm'))
-                # 2) set source
-                elevation_source = '--source=srtm1,view1,view3,srtm3'
-            else:
-                # 1) search vor view1 elevation files
-                out_file_elevation_existing = glob.glob(os.path.join(
-                    USER_OUTPUT_DIR, str(tile["x"]), str(tile["y"]), 'elevation*view1*.osm'))
-                # 2) set source
-                elevation_source = '--source=view1,view3,srtm3'
-
-            # check for already existing elevation .osm file (the ones matched via glob)
-            if not (len(out_file_elevation_existing) == 1 and os.path.isfile(out_file_elevation_existing[0])) \
-                    or self.o_osm_data.force_processing is True:
-                self.log_tile_info(tile["x"], tile["y"], tile_count)
-                timings_tile = Timings()
-                cmd = ['phyghtmap']
-                cmd.append('-a ' + f'{tile["left"]}' + ':' + f'{tile["bottom"]}' +
-                           ':' + f'{tile["right"]}' + ':' + f'{tile["top"]}')
-                cmd.extend(['-o', f'{out_file_elevation}', '-s 10', '-c 100,50', elevation_source,
-                            '--jobs=8', '--viewfinder-mask=1', '--start-node-id=20000000000',
-                            '--max-nodes-per-tile=0', '--start-way-id=2000000000', '--write-timestamp',
-                            '--no-zero-contour', '--hgtdir=' + hgt_path])
-                cmd.append('--earthexplorer-user=' + username)
-                cmd.append('--earthexplorer-password=' + password)
-
-                run_subprocess_and_log_output(
-                    cmd, f'! Error in phyghtmap with tile: {tile["x"]},{tile["y"]}. Win_macOS/elevation')
-                self.log_tile_debug(tile["x"], tile["y"], tile_count, timings_tile.stop_and_return())
-
-            tile_count += 1
+        tasks = [(tile, self.o_osm_data.force_processing, use_srtm1,
+                  hgt_path, username, password, phyghtmap_jobs)
+                 for tile in self.o_osm_data.tiles]
+        self._run_parallel(_worker_generate_elevation, tasks, 'elevation')
 
         log.info('+ Generate contour lines for each coordinate: OK, %s', timings.stop_and_return())
 
@@ -370,77 +526,22 @@ class OsmMaps:
         log.info('-' * 80)
         log.info('# Split filtered country files to tiles')
         timings = Timings()
-        tile_count = 1
-        for tile in self.o_osm_data.tiles:
 
+        is_windows = platform.system() == "Windows"
+        tasks = []
+        for tile in self.o_osm_data.tiles:
             for country, val in self.o_osm_data.border_countries.items():
                 if country not in tile['countries']:
                     continue
-                self.log_tile_info(tile["x"], tile["y"], tile_count, country)
-                timings_tile = Timings()
-                out_file = os.path.join(USER_OUTPUT_DIR,
-                                        f'{tile["x"]}', f'{tile["y"]}', f'split-{country}.osm.pbf')
-                out_file_names = os.path.join(USER_OUTPUT_DIR,
-                                              f'{tile["x"]}', f'{tile["y"]}', f'split-{country}-names.osm.pbf')
+                tasks.append((tile, country, val['filtered_file'],
+                              val['filtered_file_names'], is_windows,
+                              self.osmconvert_path))
 
-                # split filtered country files to tiles every time because the result is different per constants (user input)
-                # Windows
-                if platform.system() == "Windows":
-                    cmd = [self.osmconvert_path,
-                           '-v', '--hash-memory=2500']
-                    cmd.append('-b='+f'{tile["left"]}' + ',' + f'{tile["bottom"]}' +
-                               ',' + f'{tile["right"]}' + ',' + f'{tile["top"]}')
-                    cmd.extend(
-                        ['--complete-ways', '--complete-multipolygons', '--complete-boundaries'])
-                    cmd.append(val['filtered_file'])
-                    cmd.append('-o='+out_file)
-
-                    run_subprocess_and_log_output(
-                        cmd, f'! Error in osmconvert with country: {country}. Win/out_file')
-
-                    cmd = [self.osmconvert_path,
-                           '-v', '--hash-memory=2500']
-                    cmd.append('-b='+f'{tile["left"]}' + ',' + f'{tile["bottom"]}' +
-                               ',' + f'{tile["right"]}' + ',' + f'{tile["top"]}')
-                    cmd.extend(
-                        ['--complete-ways', '--complete-multipolygons', '--complete-boundaries'])
-                    cmd.append(val['filtered_file_names'])
-                    cmd.append('-o='+out_file_names)
-
-                    run_subprocess_and_log_output(
-                        cmd, '! Error in osmconvert with country: {country}. Win/out_file_names')
-
-                # Non-Windows
-                else:
-                    cmd = ['osmium', 'extract']
-                    cmd.extend(
-                        ['-b', f'{tile["left"]},{tile["bottom"]},{tile["right"]},{tile["top"]}'])
-                    cmd.append(val['filtered_file'])
-                    cmd.extend(['-s', 'smart'])
-                    cmd.extend(['-o', out_file])
-                    cmd.extend(['--overwrite'])
-
-                    run_subprocess_and_log_output(
-                        cmd, '! Error in Osmium with country: {country}. macOS/out_file')
-
-                    cmd = ['osmium', 'extract']
-                    cmd.extend(
-                        ['-b', f'{tile["left"]},{tile["bottom"]},{tile["right"]},{tile["top"]}'])
-                    cmd.append(val['filtered_file_names'])
-                    cmd.extend(['-s', 'smart'])
-                    cmd.extend(['-o', out_file_names])
-                    cmd.extend(['--overwrite'])
-
-                    run_subprocess_and_log_output(
-                        cmd, '! Error in Osmium with country: {country}. macOS/out_file_names')
-
-                self.log_tile_debug(tile["x"], tile["y"], tile_count, f'{country} {timings_tile.stop_and_return()}')
-
-            tile_count += 1
+        self._run_parallel(_worker_split_tile_country, tasks, 'split')
 
         log.info('+ Split filtered country files to tiles: OK, %s', timings.stop_and_return())
 
-    def merge_splitted_tiles_with_land_and_sea(self, process_border_countries, contour): # pylint: disable=too-many-locals
+    def merge_splitted_tiles_with_land_and_sea(self, process_border_countries, contour):
         """
         Merge splitted tiles with land elevation and sea
         - elevation data only if requested
@@ -449,100 +550,26 @@ class OsmMaps:
         log.info('-' * 80)
         log.info('# Merge splitted tiles with land, elevation, and sea')
         timings = Timings()
-        tile_count = 1
-        for tile in self.o_osm_data.tiles:  # pylint: disable=too-many-nested-blocks
-            self.log_tile_info(tile["x"], tile["y"], tile_count)
-            timings_tile = Timings()
 
-            out_tile_dir = os.path.join(USER_OUTPUT_DIR,
-                                        f'{tile["x"]}', f'{tile["y"]}')
-            out_file_merged = os.path.join(out_tile_dir, 'merged.osm.pbf')
+        is_windows = platform.system() == "Windows"
+        border_country_set = set(self.o_osm_data.border_countries)
+        tasks = [(tile, border_country_set, process_border_countries, contour,
+                  self.workers, is_windows, self.cleanup_intermediate)
+                 for tile in self.o_osm_data.tiles]
 
-            land_files = glob.glob(os.path.join(out_tile_dir, 'land*.osm'))
-
-            elevation_files = glob.glob(
-                os.path.join(out_tile_dir, 'elevation*.osm'))
-
-            # merge splitted tiles with land and sea every time because the result is different per constants (user input)
-            # sort land* osm files
-            self.sort_osm_files(tile)
-
-            # Windows
-            if platform.system() == "Windows":
-                cmd = [OSMOSIS_WIN_FILE_PATH]
-            # Non-Windows
-            else:
-                cmd = ['osmosis']
-
-            loop = 0
-            # loop through all countries of tile, if border-countries should be processed.
-            # if border-countries should not be processed, only process the "entered" country
-            for country in tile['countries']:
-                if process_border_countries or country in self.o_osm_data.border_countries:
-                    cmd.append('--rbf')
-                    cmd.append(os.path.join(
-                        out_tile_dir, f'split-{country}.osm.pbf'))
-                    cmd.append('workers=' + self.workers)
-                    if loop > 0:
-                        cmd.append('--merge')
-
-                    cmd.append('--rbf')
-                    cmd.append(os.path.join(
-                        out_tile_dir, f'split-{country}-names.osm.pbf'))
-                    cmd.append('workers=' + self.workers)
-                    cmd.append('--merge')
-
-                    loop += 1
-
-            for land in land_files:
-                cmd.extend(
-                    ['--rx', 'file='+land, '--s', '--m'])
-
-            if contour:
-                for elevation in elevation_files:
-                    cmd.extend(
-                        ['--rx', 'file='+elevation, '--s', '--m'])
-
-            cmd.extend(
-                ['--rx', 'file='+os.path.join(out_tile_dir, 'sea.osm'), '--s', '--m'])
-            cmd.extend(['--tag-transform', 'file=' + os.path.join(RESOURCES_DIR,
-                                                                  'tunnel-transform.xml'), '--wb', out_file_merged, 'omitmetadata=true'])
-
-            run_subprocess_and_log_output(
-                cmd, f'! Error in Osmosis with tile: {tile["x"]},{tile["y"]}')
-
-            self.log_tile_debug(tile["x"], tile["y"], tile_count, timings_tile.stop_and_return())
-            tile_count += 1
+        self._run_parallel(_worker_merge_tile, tasks, 'merge')
 
         log.info('+ Merge splitted tiles with land, elevation, and sea: OK, %s', timings.stop_and_return())
 
     def sort_osm_files(self, tile):
         """
         sort land*.osm files to be in this order: nodes, then ways, then relations.
-        this is mandatory for osmium-merge since:
-        https://github.com/osmcode/osmium-tool/releases/tag/v1.13.2
+        Kept as a thin wrapper around the module-level helper so existing
+        callers keep working.
         """
-
         log.debug('-' * 80)
         log.debug('# Sorting land* osm files')
-
-        # get all land* osm files
-        land_files = glob.glob(os.path.join(USER_OUTPUT_DIR,
-                                            f'{tile["x"]}', f'{tile["y"]}', 'land*.osm'))
-
-        for land in land_files:
-            if platform.system() == "Windows":
-                cmd = [OSMOSIS_WIN_FILE_PATH]
-            else:
-                cmd = ['osmosis']
-
-            cmd.extend(['--read-xml', 'file='+land])
-            cmd.append('--sort')
-            cmd.extend(['--write-xml', 'file='+land])
-
-        run_subprocess_and_log_output(
-            cmd, f'Error in Osmosis with sorting land* osm files of tile: {tile["x"]},{tile["y"]}')
-
+        _sort_land_files_for_tile(tile, platform.system() == "Windows")
         log.debug('+ Sorting land* osm files: OK')
 
     def create_map_files(self, save_cruiser, tag_wahoo_xml, hdd_mode):
@@ -553,73 +580,28 @@ class OsmMaps:
         log.info('-' * 80)
         log.info('# Creating .map files for tiles')
 
-        # Number of threads to use in the mapwriter plug-in
-        threads = multiprocessing.cpu_count() - 1
-        if int(threads) < 1:
-            threads = 1
+        # Resolve the tag-wahoo xml path once; fail fast on bad input.
+        try:
+            tag_wahoo_xml_path = get_tag_wahoo_xml_path(tag_wahoo_xml)
+        except TagWahooXmlNotFoundError:
+            log.error(
+                'The tag-wahoo xml file was not found: ˚%s˚. Does the file exist and is your input correct?', tag_wahoo_xml)
+            sys.exit()
 
+        # Split the available cores between the process pool and the per-tile
+        # mapwriter threads. With N parallel tiles each using threads=K we want
+        # N*K ≈ cpu_count.
+        total_threads = max(1, (os.cpu_count() or 1) - 1)
+        mapwriter_threads = max(1, total_threads // max(1, self.jobs))
+        lzma_threads = mapwriter_threads
+
+        is_windows = platform.system() == "Windows"
         timings = Timings()
-        tile_count = 1
-        for tile in self.o_osm_data.tiles:
-            self.log_tile_info(tile["x"], tile["y"], tile_count)
-            timings_tile = Timings()
 
-            out_file_map = os.path.join(USER_OUTPUT_DIR,
-                                        f'{tile["x"]}', f'{tile["y"]}.map')
-
-            # apply tag-wahoo xml every time because the result is different per .xml file (user input)
-            merged_file = os.path.join(USER_OUTPUT_DIR,
-                                       f'{tile["x"]}', f'{tile["y"]}', 'merged.osm.pbf')
-
-            # Windows
-            if platform.system() == "Windows":
-                cmd = [OSMOSIS_WIN_FILE_PATH, '--rbf', merged_file,
-                       'workers=' + self.workers, '--mw', 'file='+out_file_map]
-            # Non-Windows
-            else:
-                cmd = ['osmosis', '--rb', merged_file,
-                       '--mw', 'file='+out_file_map]
-
-            cmd.append(
-                f'bbox={tile["bottom"]:.6f},{tile["left"]:.6f},{tile["top"]:.6f},{tile["right"]:.6f}')
-            cmd.append('zoom-interval-conf=12,0,17')
-            cmd.append(f'threads={threads}')
-            if hdd_mode:
-                cmd.append('type=hd')
-            # add path to tag-wahoo xml file
-            try:
-                cmd.append(
-                    f'tag-conf-file={get_tag_wahoo_xml_path(tag_wahoo_xml)}')
-            except TagWahooXmlNotFoundError:
-                log.error(
-                    'The tag-wahoo xml file was not found: ˚%s˚. Does the file exist and is your input correct?', tag_wahoo_xml)
-                sys.exit()
-
-            run_subprocess_and_log_output(
-                cmd, f'Error in creating map file via Osmosis with tile: {tile["x"]},{tile["y"]}. mapwriter plugin installed?')
-
-            # Windows
-            if platform.system() == "Windows":
-                cmd = [get_tooling_win_path('lzma'), 'e', out_file_map,
-                       out_file_map+'.lzma', f'-mt{threads}', '-d27', '-fb273', '-eos']
-            # Non-Windows
-            else:
-                # force overwrite of output file and (de)compress links
-                cmd = ['lzma', out_file_map, '-f']
-
-                # --keep: do not delete source file
-                if save_cruiser:
-                    cmd.append('--keep')
-
-            run_subprocess_and_log_output(
-                cmd, f'! Error creating map files for tile: {tile["x"]},{tile["y"]}')
-
-            # Create "tile present" file
-            with open(out_file_map + '.lzma.17', mode='wb') as tile_present_file:
-                tile_present_file.close()
-
-            self.log_tile_debug(tile["x"], tile["y"], tile_count, timings_tile.stop_and_return())
-            tile_count += 1
+        tasks = [(tile, tag_wahoo_xml_path, hdd_mode, is_windows,
+                  save_cruiser, mapwriter_threads, self.workers, lzma_threads)
+                 for tile in self.o_osm_data.tiles]
+        self._run_parallel(_worker_create_map, tasks, 'map')
 
         log.info('+ Creating .map files for tiles: OK, %s', timings.stop_and_return())
 
@@ -647,17 +629,26 @@ class OsmMaps:
 
         # copy the needed tiles to the country folder
         log.info('+ Copying %s tiles to output folders', extension)
+        copy_tasks = []
         for tile in self.o_osm_data.tiles:
             src = os.path.join(f'{USER_OUTPUT_DIR}',
                                f'{tile["x"]}', f'{tile["y"]}') + extension
             dst = os.path.join(
                 f'{USER_WAHOO_MC}', folder_name, f'{tile["x"]}', f'{tile["y"]}') + extension
+            copy_tasks.append((src, dst))
+            if extension == '.map.lzma':
+                copy_tasks.append((src + '.17', dst + '.17'))
+
+        def _copy(pair):
+            src, dst = pair
             self.copy_to_dst(extension, src, dst)
 
-            if extension == '.map.lzma':
-                src = src + '.17'
-                dst = dst + '.17'
-                self.copy_to_dst(extension, src, dst)
+        if self.jobs > 1 and len(copy_tasks) > 1:
+            with ThreadPoolExecutor(max_workers=min(self.jobs, len(copy_tasks))) as ex:
+                list(ex.map(_copy, copy_tasks))
+        else:
+            for pair in copy_tasks:
+                _copy(pair)
 
         if zip_folder:
             # Windows
@@ -739,39 +730,33 @@ class OsmMaps:
 
         write_json_file_generic(os.path.join(
             USER_OUTPUT_DIR, country, ".config.json"), configuration)
+        # invalidate cache so subsequent reads see the new file
+        self._country_config_cache.pop(country, None)
 
     def tags_are_identical_to_last_run(self, country):
         """
         compare tags of this run with used tags from last run stored in _tiles/{country} directory
         """
-        tags_are_identical = True
-
+        country_config = self._get_country_config(country)
+        if country_config is None:
+            return False
         try:
-            country_config = read_json_file_country_config(os.path.join(
-                USER_OUTPUT_DIR, country, ".config.json"))
-            if not country_config["tags_last_run"] == translate_tags_to_keep(sys_platform=platform.system()) \
-                    or not country_config["name_tags_last_run"] == translate_tags_to_keep(name_tags=True, sys_platform=platform.system()):
-                tags_are_identical = False
-        except (FileNotFoundError, KeyError):
-            tags_are_identical = False
-
-        return tags_are_identical
+            return country_config["tags_last_run"] == translate_tags_to_keep(sys_platform=platform.system()) \
+                and country_config["name_tags_last_run"] == translate_tags_to_keep(name_tags=True, sys_platform=platform.system())
+        except KeyError:
+            return False
 
     def last_changed_is_identical_to_last_run(self, country):
         """
         compare tags of this run with used tags from last run stored in _tiles/{country} directory
         """
-        last_changed_is_identical = True
-
+        country_config = self._get_country_config(country)
+        if country_config is None:
+            return False
         try:
-            country_config = read_json_file_country_config(os.path.join(
-                USER_OUTPUT_DIR, country, ".config.json"))
-            if not country_config["changed_ts_map_last_run"] == get_timestamp_last_changed(self.o_osm_data.border_countries[country]['map_file']):
-                last_changed_is_identical = False
-        except (FileNotFoundError, KeyError):
-            last_changed_is_identical = False
-
-        return last_changed_is_identical
+            return country_config["changed_ts_map_last_run"] == get_timestamp_last_changed(self.o_osm_data.border_countries[country]['map_file'])
+        except KeyError:
+            return False
 
     def log_tile_info(self, tile_x, tile_y, tile_count, additional_info=''):
         """
