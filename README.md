@@ -31,11 +31,10 @@ If anything is unclear or seams wrong, write an [:pencil2: issue](https://github
 
 2. [:computer: Run wahooMapsCreator - detailled usage description](docs/USAGE.md#usage-of-wahoomapscreator)
 
-> In short: install system tools + [`uv`](https://docs.astral.sh/uv/), then run via CLI or GUI.
+> In short: install system tools + [`uv`](https://docs.astral.sh/uv/), then run from the CLI.
 ```
 uv sync
-uv run python -m wahoomc cli -co malta
-uv run python -m wahoomc gui
+uv run python -m wahoomc -co malta
 ```
 
 3. [:floppy_disk: Copy the map-files to your device after generation](docs/COPY_TO_WAHOO.md#copy-maps-files-to-wahoo-device-)

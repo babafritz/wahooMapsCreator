@@ -43,7 +43,6 @@ def run(run_level):
     if run_level == 'init':
         o_input_data = cli_init()
     else:
-        # handle GUI and CLI processing via one function and different cli-calls
         o_input_data = process_call_of_the_tool()
 
     if o_input_data.verbose:

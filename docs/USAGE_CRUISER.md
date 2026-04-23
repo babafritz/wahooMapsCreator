@@ -16,7 +16,7 @@ By doing so, you can check if the wanted OSM elements are in your generated map 
 
 2. Create uncompressed maps for usage in cruiser. The map files you use for the Wahoo device are compressed and cannot be used in cruiser.
 
-Either use `-c` CLI argument or set the checkbox in the Advanced settings when running the GUI.
+Pass the `-c` CLI argument when running wahooMapsCreator.
 
 ## Run cruiser
 Running cruiser is most simly by running `cruiser.jar`. Running the other files via command line is also possible

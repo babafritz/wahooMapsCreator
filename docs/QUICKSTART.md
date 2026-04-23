@@ -95,11 +95,10 @@ described in [USAGE.md](USAGE.md).
 ## 5. Run wahooMapsCreator
 
 ```
-uv run python -m wahoomc init                       # first-run setup
-uv run python -m wahoomc cli -co malta              # build Malta
-uv run python -m wahoomc cli -co malta -j 8         # parallel build (8 workers)
-uv run python -m wahoomc cli -co malta -ci          # also delete intermediates
-uv run python -m wahoomc gui                        # start the GUI
+uv run python -m wahoomc.init                       # first-run setup
+uv run python -m wahoomc -co malta                  # build Malta
+uv run python -m wahoomc -co malta -j 8             # parallel build (8 workers)
+uv run python -m wahoomc -co malta -ci              # also delete intermediates
 ```
 
 Useful new flags:

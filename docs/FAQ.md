@@ -22,7 +22,7 @@
 ## Usage of wahooMapsCreator
 ### The tool stops but does not output an error
 Run the tool and output debug logging messages.
-Add the `-v` argument if running via CLI or set the checkbox on `Advanced settings` via GUI.
+Add the `-v` argument when running the tool.
 
 ### I have a Java error. "Java heap space - out of memory" 
 If you are on Windows and running out of memory, it can be that you just don't have enough memory OR that the memory limit of java 32 is the cause.
