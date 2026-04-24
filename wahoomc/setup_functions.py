@@ -40,12 +40,6 @@ def initialize_work_directories():
     os.makedirs(USER_CONFIG_DIR, exist_ok=True)
 
 
-def adjustments_due_to_breaking_changes():
-    """
-    handle breaking changes
-    """
-
-
 def check_installation_of_required_programs():
     """
     check if required programs are installed
@@ -181,19 +175,10 @@ def ask_for_and_write_earthexplorer_credentials():
 
 def read_earthexplorer_credentials():
     """
-    Read the version of wahoomc's last run
-    by reading json and access version attribute, if not set, give None
+    Read earthexplorer credentials from config; returns (None, None) if not set.
     """
-    try:
-        username = read_json_file_generic(config_file_path)[
-            "earthexplorer-user"]
-        password = read_json_file_generic(config_file_path)[
-            "earthexplorer-password"]
-    except KeyError:
-        username = None
-        password = None
-
-    return username, password
+    config = read_json_file_generic(config_file_path)
+    return config.get("earthexplorer-user"), config.get("earthexplorer-password")
 
 
 def copy_jsons_from_repo_to_user(folder, file=''):

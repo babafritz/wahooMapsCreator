@@ -19,8 +19,6 @@ USER_CONFIG_DIR = os.path.join(USER_WAHOO_MC, '_config')
 # Python Package - wahooMapsCreator directory
 WAHOO_MC_DIR = os.path.dirname(__file__)
 RESOURCES_DIR = os.path.join(WAHOO_MC_DIR, 'resources')
-# location of repo / python installation - not used
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 VERSION = '4.3.0'
 
 

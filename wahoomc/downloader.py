@@ -49,36 +49,21 @@ def older_than_x_days(file_creation_timestamp, max_days_old):
     return bool(file_creation_timestamp < to_old_timestamp)
 
 
-def download_file(target_filepath, url, target_dir=""):
+def download_file(target_filepath, url):
     """
-    download given file and eventually unzip it
+    download given file and unzip it if needed
     """
     logging_filename = target_filepath.split(os.sep)[-1]
     log.info('-' * 80)
     log.info('# Downloading %s file', logging_filename)
     timings = Timings()
     if url.split('.')[-1] == 'zip':
-        # build target-filepath based on last element of URL
         last_part = url.rsplit('/', 1)[-1]
         dl_file_path = os.path.join(USER_DL_DIR, last_part)
-        # download URL to file
         download_url_to_file(url, dl_file_path)
-
-        # if a target directory is given --> extract into that folder
-        if target_dir:
-            target_path = target_dir
-        else:
-            target_path = USER_DL_DIR
-
-        # unpack it
-        if os.path.basename(target_dir) == 'Osmosis':
-            unzip_ignore_first_dir(dl_file_path, target_path)
-        else:
-            unzip(dl_file_path, target_path)
-
+        unzip(dl_file_path, USER_DL_DIR)
         os.remove(dl_file_path)
     else:
-        # no zipping --> directly download to given target filepath
         download_url_to_file(url, target_filepath)
     # Check if file exists (if target file exists)
     if not os.path.isfile(target_filepath):
@@ -196,42 +181,12 @@ def get_latest_pypi_version():
         return None
 
 
-def write_to_file(file_path, request):
-    """
-    write content of request into given file path
-    """
-    with open(file_path, mode='wb') as file_handle:
-        for chunk in request.iter_content(chunk_size=1024*100):
-            file_handle.write(chunk)
-
-
 def unzip(source_filename, dest_dir):
     """
     unzip the given file into the given directory
     """
     with zipfile.ZipFile(source_filename, 'r') as zip_ref:
         zip_ref.extractall(dest_dir)
-
-
-def unzip_ignore_first_dir(source_filename, dest_dir):
-    """
-    unzip the given file into the given directory without the first directory.
-    made because of Osmosis was unzipped to Osmosis/osmosis-0.49.2
-    """
-    first_dir_processed = False
-    with zipfile.ZipFile(source_filename) as zip_file:
-        for zip_info in zip_file.infolist():
-            if zip_info.is_dir() and not first_dir_processed:
-                # ignore first dir in zip. for osmosis, this is 'osmosis-0.49.2' as of 14.10.2024
-                first_dir_processed = True
-                continue
-
-            # cut out first part of the dir. for osmosis, this is 'osmosis-0.49.2' as of 14.10.2024
-            dir_without_first_part = zip_info.filename.split('/', 1)[1]
-
-            # set name where to save to the newly created dir name
-            zip_info.filename = dir_without_first_part
-            zip_file.extract(zip_info, dest_dir)
 
 
 class Downloader:

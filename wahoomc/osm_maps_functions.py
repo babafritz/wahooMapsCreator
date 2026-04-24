@@ -16,7 +16,7 @@ import shutil
 import logging
 
 # import custom python packages
-from wahoomc.file_directory_functions import read_json_file_country_config, create_empty_directories, write_json_file_generic
+from wahoomc.file_directory_functions import read_json_file_generic, create_empty_directories, write_json_file_generic
 from wahoomc.constants_functions import translate_tags_to_keep, \
     get_tag_wahoo_xml_path, TagWahooXmlNotFoundError
 
@@ -74,6 +74,16 @@ def get_timestamp_last_changed(file_path):
 # ---------------------------------------------------------------------------
 
 
+def _is_edge_tile(tile):
+    return tile["x"] in (0, 255) or tile["y"] in (0, 255)
+
+
+def _tile_bbox(tile, pad=0.1):
+    """Return (left, bottom, right, top) with padding for interior tiles."""
+    p = 0 if _is_edge_tile(tile) else pad
+    return tile["left"] - p, tile["bottom"] - p, tile["right"] + p, tile["top"] + p
+
+
 def _worker_generate_land(args):
     tile, force_processing = args
     land_file = os.path.join(USER_OUTPUT_DIR,
@@ -82,17 +92,9 @@ def _worker_generate_land(args):
                                   f'{tile["x"]}', f'{tile["y"]}', 'land')
 
     if not os.path.isfile(land_file) or force_processing is True:
-        cmd = ['ogr2ogr', '-overwrite', '-skipfailures']
-        if tile["x"] == 255 or tile["y"] == 255 or tile["x"] == 0 or tile["y"] == 0:
-            cmd.extend(['-spat', f'{tile["left"]:.6f}',
-                        f'{tile["bottom"]:.6f}',
-                        f'{tile["right"]:.6f}',
-                        f'{tile["top"]:.6f}'])
-        else:
-            cmd.extend(['-spat', f'{tile["left"]-0.1:.6f}',
-                        f'{tile["bottom"]-0.1:.6f}',
-                        f'{tile["right"]+0.1:.6f}',
-                        f'{tile["top"]+0.1:.6f}'])
+        left, bottom, right, top = _tile_bbox(tile)
+        cmd = ['ogr2ogr', '-overwrite', '-skipfailures',
+               '-spat', f'{left:.6f}', f'{bottom:.6f}', f'{right:.6f}', f'{top:.6f}']
         cmd.append(land_file)
         cmd.append(LAND_POLYGONS_PATH)
 
@@ -113,10 +115,7 @@ def _worker_generate_sea(args):
     if os.path.isfile(out_file_sea) and force_processing is False:
         return
 
-    if tile["x"] == 255 or tile["y"] == 255 or tile["x"] == 0 or tile["y"] == 0:
-        left, bottom, right, top = tile["left"], tile["bottom"], tile["right"], tile["top"]
-    else:
-        left, bottom, right, top = tile["left"] - 0.1, tile["bottom"] - 0.1, tile["right"] + 0.1, tile["top"] + 0.1
+    left, bottom, right, top = _tile_bbox(tile)
 
     sea_data = (sea_template
                 .replace('$LEFT', f'{left:.6f}')
@@ -309,7 +308,7 @@ class OsmMaps:
         if country in self._country_config_cache:
             return self._country_config_cache[country]
         try:
-            cfg = read_json_file_country_config(os.path.join(
+            cfg = read_json_file_generic(os.path.join(
                 USER_OUTPUT_DIR, country, ".config.json"))
         except FileNotFoundError:
             cfg = None
@@ -454,17 +453,6 @@ class OsmMaps:
 
         log.info('+ Merge splitted tiles with land, elevation, and sea: OK, %s', timings.stop_and_return())
 
-    def sort_osm_files(self, tile):
-        """
-        sort land*.osm files to be in this order: nodes, then ways, then relations.
-        Kept as a thin wrapper around the module-level helper so existing
-        callers keep working.
-        """
-        log.debug('-' * 80)
-        log.debug('# Sorting land* osm files')
-        _sort_land_files_for_tile(tile)
-        log.debug('+ Sorting land* osm files: OK')
-
     def create_map_files(self, save_cruiser, tag_wahoo_xml, hdd_mode):
         """
         Creating .map files
@@ -512,12 +500,7 @@ class OsmMaps:
         log.info('+ Country: %s', self.o_osm_data.country_name)
         timings = Timings()
 
-        # Check for us/utah etc names
-        try:
-            res = self.o_osm_data.country_name.index('/')
-            self.o_osm_data.country_name = self.o_osm_data.country_name[res+1:]
-        except ValueError:
-            pass
+        self.o_osm_data.country_name = self.o_osm_data.country_name.split('/')[-1]
 
         # copy the needed tiles to the country folder
         log.info('+ Copying %s tiles to output folders', extension)
@@ -637,26 +620,3 @@ class OsmMaps:
         except KeyError:
             return False
 
-    def log_tile_info(self, tile_x, tile_y, tile_count, additional_info=''):
-        """
-        log tile information at info log level
-        """
-        self.log_tile(tile_x, tile_y, tile_count, False, additional_info)
-
-    def log_tile_debug(self, tile_x, tile_y, tile_count, additional_info=''):
-        """
-        log tile information at debug log level
-        """
-        self.log_tile(tile_x, tile_y, tile_count, True, additional_info)
-
-    def log_tile(self, tile_x, tile_y, tile_count, log_level_debug, additional_info=''):  # pylint: disable=too-many-arguments
-        """
-        unified status logging for this class
-        """
-        msg = f'+ (tile {tile_count} of {len(self.o_osm_data.tiles)}) Coordinates: {tile_x},{tile_y}'
-        if additional_info:
-            msg = f'{msg} / {additional_info}'
-        if log_level_debug:
-            log.debug(msg)
-        else:
-            log.info(msg)

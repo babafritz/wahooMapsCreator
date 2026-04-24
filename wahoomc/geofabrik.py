@@ -17,6 +17,10 @@ from wahoomc.geofabrik_json import CountyIsNoGeofabrikCountry, GeofabrikJson
 log = logging.getLogger('main-logger')
 
 
+def _clamp(value, lo, hi):
+    return max(lo, min(hi, value))
+
+
 class XYCombinationHasNoCountries(Exception):
     """Raised when no tile is found for x/y combination"""
 
@@ -197,32 +201,13 @@ class CountryGeofabrik(InformalGeofabrikInterface):
 
     def compose_bouding_box(self, bounds):
         """Overrides InformalGeofabrikInterface.calc_bouding_box()"""
-        # get bounding box
         (bbox_left, bbox_bottom, bbox_right, bbox_top) = bounds
-
-        # convert bounding box to list of tiles at zoom level 8
         (top_x, top_y) = deg2num(bbox_top, bbox_left)
         (bot_x, bot_y) = deg2num(bbox_bottom, bbox_right)
-
-        # and stay within the allowed tilenumber range!
-        if top_x < 0:
-            top_x = 0
-        if top_x > 255:
-            top_x = 255
-        if top_y < 0:
-            top_y = 0
-        if top_y > 255:
-            top_y = 255
-        if bot_x < 0:
-            bot_x = 0
-        if bot_x > 255:
-            bot_x = 255
-        if bot_y < 0:
-            bot_y = 0
-        if bot_y > 255:
-            bot_y = 255
-
-        return {'top_x': top_x, 'top_y': top_y, 'bot_x': bot_x, 'bot_y': bot_y}
+        return {
+            'top_x': _clamp(top_x, 0, 255), 'top_y': _clamp(top_y, 0, 255),
+            'bot_x': _clamp(bot_x, 0, 255), 'bot_y': _clamp(bot_y, 0, 255),
+        }
 
     @staticmethod
     def split_input_to_list(input_value) -> list:
@@ -378,26 +363,13 @@ def calc_bounding_box_tiles(bbox):
         for y_value in range(bbox['top_y'], bbox['bot_y'] + 1):
             (tile_top, tile_left) = num2deg(x_value, y_value)
             (tile_bottom, tile_right) = num2deg(x_value+1, y_value+1)
-            if tile_left < -180:
-                tile_left = -180
-            if tile_left > 180:
-                tile_left = 180
-            if tile_right < -180:
-                tile_right = -180
-            if tile_right > 180:
-                tile_right = 180
-            if tile_top < -90:
-                tile_top = -90
-            if tile_top > 90:
-                tile_top = 90
-            if tile_bottom < -90:
-                tile_bottom = -90
-            if tile_bottom > 90:
-                tile_bottom = 90
-            bbox_tiles.append({'x': x_value, 'y': y_value, 'tile_left': tile_left,
-                               'tile_top': tile_top, 'tile_right': tile_right,
-                               'tile_bottom': tile_bottom})
-
+            bbox_tiles.append({
+                'x': x_value, 'y': y_value,
+                'tile_left': _clamp(tile_left, -180, 180),
+                'tile_top': _clamp(tile_top, -90, 90),
+                'tile_right': _clamp(tile_right, -180, 180),
+                'tile_bottom': _clamp(tile_bottom, -90, 90),
+            })
     return bbox_tiles
 
 

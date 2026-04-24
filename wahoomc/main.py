@@ -10,8 +10,8 @@ import logging
 from wahoomc.input import process_call_of_the_tool, cli_init
 from wahoomc.setup_functions import initialize_work_directories, \
     check_installation_of_required_programs, write_config_file, \
-    adjustments_due_to_breaking_changes, copy_jsons_from_repo_to_user, \
-    check_installed_version_against_latest_pypi, check_installation_of_programs_credentials_for_contour_lines
+    copy_jsons_from_repo_to_user, check_installed_version_against_latest_pypi, \
+    check_installation_of_programs_credentials_for_contour_lines
 from wahoomc.downloader import download_tooling
 from wahoomc.timings import Timings
 
@@ -36,7 +36,6 @@ def run(run_level):
     # because other setup stuff relies on that (breaking changes)
     check_installed_version_against_latest_pypi()
     initialize_work_directories()
-    adjustments_due_to_breaking_changes()
     download_tooling()
     check_installation_of_required_programs()
 
@@ -73,8 +72,8 @@ def run(run_level):
 
         o_osm_maps = OsmMaps(
             o_osm_data,
-            jobs=getattr(o_input_data, 'jobs', 0),
-            cleanup_intermediate=getattr(o_input_data, 'cleanup_intermediate', False),
+            jobs=o_input_data.jobs,
+            cleanup_intermediate=o_input_data.cleanup_intermediate,
         )
 
         # Filter tags from country osm.pbf files'

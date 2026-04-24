@@ -7,43 +7,12 @@ constants, functions and object for file-system operations
 import json
 import os
 from os.path import isfile, join
-import sys
 import logging
 import shutil
 
 # import custom python packages
 
 log = logging.getLogger('main-logger')
-
-
-def move_content(src_folder_name, dst_path):
-    """
-    copy files from source directory of to destination directory
-    delete source directory afterwards
-
-    similar function to copy_or_move_files_and_folder but without user-request when overwriting
-    and only support for directories
-    """
-    # build path to old folder on the same level as wahooMapsCreator
-    par_dir = os.path.abspath(os.path.join(os.path.join(
-        os.path.dirname(__file__), os.pardir), os.pardir))
-    source_dir = os.path.join(par_dir, src_folder_name)
-
-    if os.path.exists(source_dir):
-        # copy & delete directory
-        for item in os.listdir(source_dir):
-            src = os.path.join(source_dir, item)
-            dst = os.path.join(dst_path, item)
-            # next, if destination directory exists
-            if os.path.isdir(dst):
-                continue
-
-            if os.path.isdir(src):
-                shutil.copytree(src, dst)
-            else:
-                shutil.copy2(src, dst)
-
-        shutil.rmtree(source_dir)
 
 
 def create_empty_directories(parent_dir, tiles_from_json, border_countries):
@@ -60,37 +29,13 @@ def create_empty_directories(parent_dir, tiles_from_json, border_countries):
         os.makedirs(outdir, exist_ok=True)
 
 
-def read_json_file_country_config(json_file_path):
-    """
-    read the country config (of last run) from the given json file
-    """
-
-    log.debug('-' * 80)
-    log.debug('# Read country config json file')
-
-    country_config = read_json_file_generic(json_file_path)
-    if country_config == '':
-        log.error('! Json file could not be opened.')
-        sys.exit()
-
-    log.debug(
-        '+ Use country config file %s', json_file_path)
-    log.debug('+ Read country config json file: OK')
-
-    return country_config
-
-
 def read_json_file_generic(json_file_path):
     """
     reads content of given .json file
     """
     try:
         with open(json_file_path, encoding="utf-8") as json_file:
-            json_content = json.load(json_file)
-            json_file.close()
-
-        return json_content
-
+            return json.load(json_file)
     except FileNotFoundError:
         return {}
 
@@ -105,7 +50,6 @@ def write_json_file_generic(json_file_path, json_content):
     # Writing to file
     with open(json_file_path, "w", encoding="utf-8") as json_file:
         json_file.write(json_content)
-        json_file.close()
 
 
 def get_files_in_folder(folder):
@@ -115,40 +59,6 @@ def get_files_in_folder(folder):
     onlyfiles = [f for f in os.listdir(folder) if isfile(join(folder, f))]
 
     return onlyfiles
-
-
-def delete_o5m_pbf_files_in_folder(folder):
-    """
-    delete .o5m and .pbf files of given folder
-    """
-    onlyfiles = [f for f in os.listdir(folder) if isfile(join(folder, f))]
-
-    for file in onlyfiles:
-        if file.endswith('.o5m') or file.endswith('.pbf'):
-            try:
-                os.remove(os.path.join(folder, file))
-            except OSError:
-                pass
-
-
-def delete_everything_in_folder(folder):
-    """
-    delete all files and directories of given folder
-    """
-    files_and_folders = list(os.listdir(folder)) # [f for f in os.listdir(folder)]
-
-    for file in files_and_folders:
-        try:
-            file_or_dir = os.path.join(folder, file)
-            # file or dir?
-            if os.path.isfile(file_or_dir):
-                # delete file
-                os.remove(file_or_dir)
-            else:
-                # delete directory if exists. copytree fails if dir exists already
-                shutil.rmtree(file_or_dir)
-        except OSError:
-            pass
 
 
 def copy_or_move_files_and_folder(from_path, to_path, delete_from_dir=False):

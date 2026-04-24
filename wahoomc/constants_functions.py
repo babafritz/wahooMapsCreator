@@ -6,6 +6,7 @@ functions and object for constants
 # import official python packages
 import logging
 import os
+from functools import lru_cache
 
 # import custom python packages
 from wahoomc.constants import RESOURCES_DIR
@@ -23,6 +24,7 @@ class TagsToKeepNotFoundError(Exception):
     """Raised when the specified tags to keep .json file does not exist"""
 
 
+@lru_cache(maxsize=4)
 def translate_tags_to_keep(name_tags=False, use_repo=False):
     """
     translates the given tags to a list suitable for osmium tags-filter.
