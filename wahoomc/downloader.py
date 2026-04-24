@@ -68,7 +68,7 @@ def download_file(target_filepath, url):
     # Check if file exists (if target file exists)
     if not os.path.isfile(target_filepath):
         log.error('! failed to find %s', target_filepath)
-        sys.exit()
+        sys.exit(1)
     else:
         log.info('+ Downloaded: %s, %s', target_filepath, timings.stop_and_return())
 
@@ -121,7 +121,7 @@ def download_url_to_file(url, map_file_path):
 
     if response.status_code != 200:
         log.error('! failed download URL: %s (status %s)', url, response.status_code)
-        sys.exit()
+        sys.exit(1)
 
     # stream to a .part file then atomically rename so an interrupted download
     # can't leave a half-written file that later looks up to date

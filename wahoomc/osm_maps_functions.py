@@ -232,7 +232,7 @@ def _worker_merge_tile(args):
 
 def _worker_create_map(args):
     (tile, tag_wahoo_xml_path, hdd_mode,
-     save_cruiser, mapwriter_threads, workers, lzma_threads) = args
+     save_cruiser, mapwriter_threads) = args
     out_file_map = os.path.join(USER_OUTPUT_DIR,
                                 f'{tile["x"]}', f'{tile["y"]}.map')
     merged_file = os.path.join(USER_OUTPUT_DIR,
@@ -466,20 +466,19 @@ class OsmMaps:
             tag_wahoo_xml_path = get_tag_wahoo_xml_path(tag_wahoo_xml)
         except TagWahooXmlNotFoundError:
             log.error(
-                'The tag-wahoo xml file was not found: ˚%s˚. Does the file exist and is your input correct?', tag_wahoo_xml)
-            sys.exit()
+                "The tag-wahoo xml file was not found: '%s'. Does the file exist and is your input correct?", tag_wahoo_xml)
+            sys.exit(1)
 
         # Split the available cores between the process pool and the per-tile
         # mapwriter threads. With N parallel tiles each using threads=K we want
         # N*K ≈ cpu_count.
         total_threads = max(1, (os.cpu_count() or 1) - 1)
         mapwriter_threads = max(1, total_threads // max(1, self.jobs))
-        lzma_threads = mapwriter_threads
 
         timings = Timings()
 
         tasks = [(tile, tag_wahoo_xml_path, hdd_mode,
-                  save_cruiser, mapwriter_threads, self.workers, lzma_threads)
+                  save_cruiser, mapwriter_threads)
                  for tile in self.o_osm_data.tiles]
         self._run_parallel(_worker_create_map, tasks, 'map')
 
@@ -576,7 +575,7 @@ class OsmMaps:
         except Exception as exception:  # pylint: disable=broad-except
             log.error(
                 '! Error copying %s files for country %s: %s', extension, self.o_osm_data.country_name, exception)
-            sys.exit()
+            sys.exit(1)
 
     def write_country_config_file(self, country):
         """

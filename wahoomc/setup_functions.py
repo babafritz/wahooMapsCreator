@@ -52,7 +52,7 @@ def check_installation_of_required_programs():
             f"Java is not installed. {text_to_docu}")
 
     if not os.path.isfile(GEOFABRIK_PATH):
-        sys.exit('Geofabrik file is not downloaded. Please create an issue:\n- https://github.com/treee111/wahooMapsCreator/issues"')
+        sys.exit('Geofabrik file is not downloaded. Please create an issue:\n- https://github.com/treee111/wahooMapsCreator/issues')
 
     if not is_program_installed("osmium"):
         sys.exit(
