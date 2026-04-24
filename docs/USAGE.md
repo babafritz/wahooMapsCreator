@@ -20,8 +20,7 @@ wahooMapsCreator is a command-line tool. Pass arguments via the
 wahooMapsCreator runs inside the uv-managed virtualenv. Either activate it
 once per shell:
 ```
-source .venv/bin/activate        # Linux / macOS
-.venv\Scripts\activate.bat       # Windows
+source .venv/bin/activate
 ```
 …or prefix each command with `uv run` (shown in the examples below).
 
