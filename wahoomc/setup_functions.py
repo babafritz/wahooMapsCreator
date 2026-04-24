@@ -9,7 +9,6 @@ import logging
 import shutil
 from pathlib import Path
 import sys
-import pkg_resources
 
 # import custom python packages
 from wahoomc.file_directory_functions import write_json_file_generic, \
@@ -207,7 +206,7 @@ def check_installed_version_against_latest_pypi():
 
     # compare installed version against latest and issue a info if a new version is available
     if latest_version \
-            and pkg_resources.parse_version(VERSION) < pkg_resources.parse_version(latest_version):
+            and tuple(int(x) for x in VERSION.split(".")) < tuple(int(x) for x in latest_version.split(".")):
         log.info('\n\nUpdate available! \
                 \nA new version of wahoomc is available: "%s". You have installed version "%s". \
                 \nUpgrade wahoomc with "pip install wahoomc --upgrade". \
