@@ -10,7 +10,6 @@ import os.path
 import sys
 import time
 import logging
-import platform
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from email.utils import formatdate
@@ -18,7 +17,6 @@ import requests
 from requests.adapters import HTTPAdapter
 
 # import custom python packages
-from wahoomc.constants_functions import get_tooling_win_path
 from wahoomc.geofabrik_json import GeofabrikJson
 from wahoomc.timings import Timings
 
@@ -26,8 +24,6 @@ from wahoomc.constants import USER_DL_DIR
 from wahoomc.constants import USER_MAPS_DIR
 from wahoomc.constants import LAND_POLYGONS_PATH
 from wahoomc.constants import GEOFABRIK_PATH
-from wahoomc.constants import OSMOSIS_WIN_FILE_PATH
-from wahoomc.constants import USER_TOOLING_WIN_DIR
 from wahoomc.constants import USER_DIR
 
 log = logging.getLogger('main-logger')
@@ -160,56 +156,20 @@ def download_url_to_file(url, map_file_path):
 
 def download_tooling():
     """
-    Windows
-    - check for Windows tooling (osmosis, osmfilter)
-    - download if Windows tooling is not available
-    --> this is done to bring down the filesize of the python module
-    - check for mapwriter plugin and download if not existing
-
-    macOS
-    - check for mapwriter plugin and download if not existing
-
+    Download the mapsforge mapwriter plugin if not present.
     check here for new mapwriter plugin version: https://github.com/mapsforge/mapsforge
     """
     map_writer_filename = 'mapsforge-map-writer-0.21.0-jar-with-dependencies.jar'
     mapwriter_plugin_url = 'https://search.maven.org/remotecontent?filepath=org/mapsforge/mapsforge-map-writer/0.21.0/' + map_writer_filename
 
-    # Windows
-    if platform.system() == "Windows":
-        os.makedirs(USER_TOOLING_WIN_DIR, exist_ok=True)
-
-        if not os.path.isfile(OSMOSIS_WIN_FILE_PATH):
-            log.info('# Need to download Osmosis application for Windows')
-            download_file(OSMOSIS_WIN_FILE_PATH,
-                          'https://github.com/openstreetmap/osmosis/releases/download/0.49.2/osmosis-0.49.2.zip',
-                          get_tooling_win_path('Osmosis', in_user_dir=True))
-
-        if not os.path.isfile(get_tooling_win_path('osmfilter.exe', in_user_dir=True)):
-            log.info('# Need to download osmfilter application for Windows')
-
-            download_file(get_tooling_win_path('osmfilter.exe', in_user_dir=True),
-                          'http://m.m.i24.cc/osmfilter.exe')
-
-        # it seams, that as of Osmosis version 0.49.0 or at least in 0.49.2
-        # the old mapwriter plugin location does not work anymore.
-        # until v0.48.3, the location c:\Users\<username>\wahooMapsCreatorData\Osmosis\lib\default worked
-        # since v0.49.0, the location c:\Users\<username>\AppData\Roaming\Openstreetmap\Osmosis\Plugins\ works
-        mapwriter_plugin_path = os.path.join(
-            str(USER_DIR), 'AppData', 'Roaming', 'Openstreetmap', 'Osmosis', 'Plugins', map_writer_filename)
-
-    # Non-Windows
-    else:
-        mapwriter_plugin_path = os.path.join(
-            str(USER_DIR), '.openstreetmap', 'osmosis', 'plugins', map_writer_filename)
+    mapwriter_plugin_path = os.path.join(
+        str(USER_DIR), '.openstreetmap', 'osmosis', 'plugins', map_writer_filename)
 
     if not os.path.isfile(mapwriter_plugin_path):
         log.info('# Need to download Osmosis mapwriter plugin')
-        # create plugins directory
         os.makedirs(os.path.dirname(mapwriter_plugin_path), exist_ok=True)
         download_file(mapwriter_plugin_path, mapwriter_plugin_url)
 
-    # download geofabrik json as this will be needed always
-    # because of the .json file replacement by geofabrik
     download_geofabrik_file_if_not_existing()
 
 

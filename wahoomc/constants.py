@@ -16,14 +16,9 @@ LAND_POLYGONS_PATH = os.path.join(
 GEOFABRIK_PATH = os.path.join(USER_DL_DIR, 'geofabrik.json')
 USER_OUTPUT_DIR = os.path.join(USER_WAHOO_MC, '_tiles')
 USER_CONFIG_DIR = os.path.join(USER_WAHOO_MC, '_config')
-USER_TOOLING_WIN_DIR = os.path.join(USER_DL_DIR, 'tooling_win')
-OSMOSIS_WIN_FILE_PATH = os.path.join(
-    USER_TOOLING_WIN_DIR, 'Osmosis', 'bin', 'osmosis.bat')
-
 # Python Package - wahooMapsCreator directory
 WAHOO_MC_DIR = os.path.dirname(__file__)
 RESOURCES_DIR = os.path.join(WAHOO_MC_DIR, 'resources')
-TOOLING_WIN_DIR = os.path.join(WAHOO_MC_DIR, 'tooling_win')
 # location of repo / python installation - not used
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 VERSION = '4.3.0'

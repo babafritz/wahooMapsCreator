@@ -6,19 +6,18 @@ constants, functions and object for file-system operations
 # import official python packages
 import os
 import logging
-import platform
 import shutil
 from pathlib import Path
 import sys
 import pkg_resources
 
 # import custom python packages
-from wahoomc.file_directory_functions import delete_everything_in_folder, write_json_file_generic, \
+from wahoomc.file_directory_functions import write_json_file_generic, \
     read_json_file_generic, copy_or_move_files_and_folder
-from wahoomc.constants_functions import get_tooling_win_path, get_absolute_dir_user_or_repo
+from wahoomc.constants_functions import get_absolute_dir_user_or_repo
 from wahoomc.downloader import get_latest_pypi_version
 
-from wahoomc.constants import GEOFABRIK_PATH, USER_TOOLING_WIN_DIR, USER_WAHOO_MC
+from wahoomc.constants import GEOFABRIK_PATH, USER_WAHOO_MC
 from wahoomc.constants import USER_DL_DIR
 from wahoomc.constants import USER_MAPS_DIR
 from wahoomc.constants import USER_OUTPUT_DIR
@@ -45,18 +44,6 @@ def adjustments_due_to_breaking_changes():
     """
     handle breaking changes
     """
-    version_last_run = read_version_last_run() # pylint: disable=unused-variable
-
-    # Osmosis in v.0.49.2 seams not to be working on WINDOWS since the upgrade to v0.49.2
-    # - due to the path into it was downloaded, 'tooling_win/Osmosis/osmosis-0.49.2'
-    #                                   and not 'tooling_win/Osmosis'
-    # - to cleanup, tooling_win/ dir files and folders are deleted here.
-    if (version_last_run is None or \
-            pkg_resources.parse_version(VERSION) <= pkg_resources.parse_version('4.2.1')) and \
-            platform.system() == "Windows":
-        log.info(
-            'Last run was with version %s, deleting Windows Tooling files of %s directory due to possible bad files.', version_last_run, USER_TOOLING_WIN_DIR)
-        delete_everything_in_folder(USER_TOOLING_WIN_DIR)
 
 
 def check_installation_of_required_programs():
@@ -73,36 +60,17 @@ def check_installation_of_required_programs():
     if not os.path.isfile(GEOFABRIK_PATH):
         sys.exit('Geofabrik file is not downloaded. Please create an issue:\n- https://github.com/treee111/wahooMapsCreator/issues"')
 
-    if platform.system() == "Windows":
-        if not os.path.exists(get_tooling_win_path(
-                os.path.join('Osmosis', 'bin', 'osmosis.bat'), in_user_dir=True)):
-            sys.exit(
-                f"Osmosis is not available. {text_to_docu}")
+    if not is_program_installed("osmium"):
+        sys.exit(
+            f"osmium-tool is not installed. {text_to_docu}")
 
-        if not os.path.exists(get_tooling_win_path('osmconvert.exe')):
-            sys.exit(
-                f"osmconvert is not available. {text_to_docu}")
+    if not is_program_installed("osmosis"):
+        sys.exit(
+            f"Osmosis is not installed. {text_to_docu}")
 
-        if not os.path.exists(get_tooling_win_path('osmfilter.exe', in_user_dir=True)):
-            sys.exit(
-                f"osmfilter is not available. {text_to_docu}")
-
-        if not os.path.exists(get_tooling_win_path('7za.exe')):
-            sys.exit(
-                f"7za is not available. {text_to_docu}")
-
-    else:
-        if not is_program_installed("osmium"):
-            sys.exit(
-                f"osmium-tool is not installed. {text_to_docu}")
-
-        if not is_program_installed("osmosis"):
-            sys.exit(
-                f"Osmosis is not installed. {text_to_docu}")
-
-        if not is_map_writer_plugin_installed():
-            sys.exit(
-                f"mapsforge-map-writer plugin is not installed. {text_to_docu}")
+    if not is_map_writer_plugin_installed():
+        sys.exit(
+            f"mapsforge-map-writer plugin is not installed. {text_to_docu}")
 
 
 def check_installation_of_programs_credentials_for_contour_lines():
